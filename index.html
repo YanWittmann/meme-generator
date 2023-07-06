@@ -1,0 +1,197 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <meta charset="UTF-8">
+    <title>Meme Generator</title>
+
+    <style>
+        :root {
+            --gallery-max-width: 80vw;
+            --grid-image-size-max: 350px;
+        }
+
+        body {
+            font-family: Arial, sans-serif;
+            padding: 20px;
+            background-color: #f4f4f4;
+        }
+
+        h1 {
+            text-align: center;
+            margin-bottom: 20px;
+            margin-top: 0;
+        }
+
+        .controls {
+            display: flex;
+            flex-wrap: wrap;
+            justify-content: space-between;
+            gap: 10px;
+            margin-bottom: 20px;
+            padding: 20px;
+            border: 1px solid #ddd;
+            border-radius: 10px;
+            background-color: #fff;
+        }
+
+        .controls .field {
+            display: flex;
+            flex-direction: column;
+            flex-basis: calc(50% - 10px);
+        }
+
+        .controls label {
+            margin-bottom: 5px;
+            font-weight: bold;
+        }
+
+        .controls input,
+        .controls select {
+            padding: 10px;
+            border-radius: 5px;
+            border: 1px solid #ddd;
+        }
+
+        .controls button {
+            padding: 10px 20px;
+            margin: 0 auto;
+            cursor: pointer;
+            background-color: #007BFF;
+            color: #fff;
+            border-color: #007BFF;
+            border-radius: 5px;
+        }
+
+        .controls button.disabled {
+            background-color: #ccc;
+            border-color: #ccc;
+            cursor: not-allowed;
+        }
+
+        .image-preview {
+            display: grid;
+            grid-template-columns: repeat(auto-fill, minmax(var(--grid-image-size-max), 1fr));
+            gap: 15px;
+            max-width: var(--gallery-max-width);
+            margin: 0 auto;
+        }
+
+        .image-preview img {
+            width: 100%;
+            height: auto;
+            border-radius: 5px;
+        }
+    </style>
+</head>
+<body>
+
+<h1>Meme Generator</h1>
+
+<div class="controls">
+    <div class="field">
+        <label for="image-upload">Image</label>
+        <input type="file" id="image-upload" accept="image/*">
+    </div>
+    <div class="field">
+        <label for="context">Context</label>
+        <input type="text" id="context" placeholder="Chaos in the cellar">
+    </div>
+    <div class="field">
+        <label for="style">Style</label>
+        <input type="text" id="style" placeholder="Style" value="funny">
+    </div>
+    <div class="field">
+        <label for="language">Language</label>
+        <select id="language">
+            <option value="english">English</option>
+            <option value="german">German</option>
+        </select>
+    </div>
+    <div class="field">
+        <label for="meme-type">Meme Type</label>
+        <select id="meme-type">
+            <option value="1">Top Text</option>
+            <option value="2">Top & Bottom Text</option>
+            <option value="3">Bottom Text</option>
+        </select>
+    </div>
+    <button onclick="submitMeme()" id="generate-submit-button">GENERATE MEME!</button>
+</div>
+
+<div class="image-preview" id="image-preview"></div>
+
+<script>
+    const endpoint = `${window.location.protocol}//${window.location.hostname}:5003/memegen/generate`;
+    let isGenerating = false;
+
+    function setIsGenerating(isGen) {
+        let button = document.getElementById("generate-submit-button");
+        if (isGen) {
+            button.classList.add("disabled");
+            button.innerText = "Generating...";
+        } else {
+            button.classList.remove("disabled");
+            button.innerText = "GENERATE MEME!";
+        }
+        isGenerating = isGen;
+    }
+
+    function submitMeme() {
+        if (isGenerating) return;
+        setIsGenerating(true);
+
+        const imageUpload = document.getElementById('image-upload');
+        const context = document.getElementById('context').value;
+        const style = document.getElementById('style').value;
+        const language = document.getElementById('language').value;
+        const memeType = document.getElementById('meme-type').value;
+
+        // Check if an image file has been selected
+        if (!imageUpload.files || imageUpload.files.length === 0) {
+            alert('Please select an image file.');
+            setIsGenerating(false);
+            return;
+        }
+
+        const reader = new FileReader();
+        reader.onloadend = function () {
+            const base64img = reader.result.replace('data:image/jpeg;base64,', '');
+
+            fetch(endpoint, {
+                method: 'POST',
+                headers: {
+                    'Content-Type': 'application/json'
+                },
+                body: JSON.stringify({
+                    base64img: base64img,
+                    language: language,
+                    style: style,
+                    context: context,
+                    meme_type: memeType
+                })
+            })
+                .then(response => response.json())
+                .then(data => {
+                    setIsGenerating(false);
+                    const imagePreview = document.getElementById('image-preview');
+                    data.forEach(base64img => {
+                        const img = document.createElement('img');
+                        img.src = 'data:image/jpeg;base64,' + base64img;
+                        imagePreview.insertBefore(img, imagePreview.firstChild);
+                    });
+                })
+                .catch(error => {
+                    console.error('Error:', error);
+                    setIsGenerating(false);
+                });
+        }
+
+        reader.readAsDataURL(imageUpload.files[0]);
+    }
+
+    setIsGenerating(false);
+</script>
+
+</body>
+</html>
