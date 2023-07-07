@@ -24,7 +24,7 @@ openai.api_key = ''
 gpt_model = 'gpt-3.5-turbo'
 blip2_model = 3
 memes_per_request = 3
-captions_per_request = 5
+captions_per_request = 4
 
 fake_mode = False
 
