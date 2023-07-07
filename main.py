@@ -3,7 +3,7 @@ import time
 
 from lavis.models import load_model_and_preprocess
 
-from PIL import Image
+from PIL import Image, ImageOps
 import requests
 import torch
 
@@ -24,6 +24,9 @@ openai.api_key = ''
 gpt_model = 'gpt-3.5-turbo'
 blip2_model = 3
 memes_per_request = 3
+captions_per_request = 5
+
+fake_mode = False
 
 device = torch.device("cuda") if torch.cuda.is_available() else "cpu"
 print("[BLIP 2] selected device:", device)
@@ -44,30 +47,24 @@ if blip2_model not in model_info:
 name, model_type = model_info[blip2_model]
 print("[BLIP 2] selected model:", name, model_type)
 
-model, vis_processors, _ = load_model_and_preprocess(
-    name=name, model_type=model_type, is_eval=True, device=device
-)
-
-print("[BLIP 2] vis_processors keys:", vis_processors.keys())
-
-
-def generate_caption_for_url(img_url):
-    raw_image = Image.open(requests.get(img_url, stream=True).raw).convert('RGB')
-    raw_image.resize((596, 437))
-
-    image = vis_processors["eval"](raw_image).unsqueeze(0).to(device)
-
-    # due to the non-determinstic nature of necleus sampling, you may get different captions.
-    return model.generate({"image": image}, use_nucleus_sampling=True, num_captions=memes_per_request)
+if not fake_mode:
+    model, vis_processors, _ = load_model_and_preprocess(
+        name=name, model_type=model_type, is_eval=True, device=device
+    )
+    print("[BLIP 2] vis_processors keys:", vis_processors.keys())
+else:
+    model, vis_processors = None, None
 
 
 def generate_caption_for_image(raw_image):
-    raw_image.resize((596, 437))
-
-    image = vis_processors["eval"](raw_image).unsqueeze(0).to(device)
-
-    # due to the non-determinstic nature of necleus sampling, you may get different captions.
-    return model.generate({"image": image}, use_nucleus_sampling=True, num_captions=memes_per_request)
+    if model is not None and not fake_mode:
+        image = vis_processors["eval"](raw_image).unsqueeze(0).to(device)
+        # due to the non-determinstic nature of necleus sampling, you may get different captions.
+        return model.generate({"image": image}, use_nucleus_sampling=True, num_captions=captions_per_request)
+    else:
+        return ["a yellow box is sitting outside on a brick sidewalk",
+                "a yellow postal box with a mail slot",
+                "a package is sitting on top of a mailbox"]
 
 
 def decode_image(base64_image):
@@ -81,6 +78,9 @@ def decode_image(base64_image):
 
     # Create a BytesIO object and load the image data
     image = Image.open(io.BytesIO(image_data))
+
+    # Apply orientation from EXIF data
+    image = ImageOps.exif_transpose(image)
 
     return image
 
@@ -106,19 +106,29 @@ def encode_image(image):
 
 
 def generate_meme_from_caption(properties):
-    return json.loads(openai.ChatCompletion.create(
-        model=gpt_model,
-        messages=[
-            {"role": "system", "content": "You are a seasoned meme creator.\n" +
-                                          "The user will upload an image on a meme generator website and describe it to you, including any relevant context.\n" +
-                                          "Your task is to create a funny caption for the meme based on the user's description and any other parameters they provide. The caption MUST prioritize and incorporate the main elements mentioned in the description and especially the 'context'. If a specific style is requested, make sure to follow it.\n" +
-                                          "To allow for the user to pick from multiple variants, your response should be a JSON array of " + str(
-                memes_per_request) + " objects. Each object must contain all keys specified in the \"requested_out_keys\" field. If multiple keys are requested, regard them as a single meme that is consistent in itself. The total length of all words in a single object (including all keys) must not exceed 20 words.\n" +
-                                          "The caption must be based on the description and context provided by the user. Aim for humor, unless the user specifies otherwise.\n" +
-                                          "Focus primarily on the elements included in the context and/or the most humorous ones."},
-            {"role": "user", "content": json.dumps(properties)},
+    if not fake_mode:
+        return json.loads(openai.ChatCompletion.create(
+            model=gpt_model,
+            messages=[
+                {"role": "system", "content": "You are a seasoned meme creator.\n" +
+                                              "The user will upload an image on a meme generator website and describe it to you, including any relevant context.\n" +
+                                              "Your task is to create a funny caption for the meme based on the user's description and any other parameters they provide. The caption MUST prioritize and incorporate the main elements mentioned in the description and especially the 'context'. If a specific style is requested, make sure to follow it.\n" +
+                                              "To allow for the user to pick from multiple variants, your response should be a JSON array of " + str(
+                    memes_per_request) + " objects. Each object must contain all keys specified in the \"requested_out_keys\" field. If multiple keys are requested, regard them as a single meme that is consistent in itself. The total length of all words in a single object (including all keys) must not exceed 20 words.\n" +
+                                              "The caption must be based on the description and context provided by the user. Aim for humor, unless the user specifies otherwise.\n" +
+                                              "Focus primarily on the elements included in the context and/or the most humorous ones."},
+                {"role": "user", "content": json.dumps(properties)},
+            ]
+        ).choices[0].message.content)
+    else:
+        return [
+            {"bottom_caption": "When your package is so excited to be delivered, it can't wait for you to open the"
+                               " mailbox it can't wait for you to open the",
+             "top_caption": "When your package is so excited to be delivered, it can't wait for you to open the"
+                            " mailbox it can't wait for you to open the"},
+            {"bottom_caption": "When you order a package online and want to make sure your mailbox gets the message"},
+            {"bottom_caption": "When you trust your package to arrive at 10"}
         ]
-    ).choices[0].message.content)
 
 
 app = quart_cors.cors(quart.Quart(__name__), allow_origin="*")
@@ -127,6 +137,10 @@ app = quart_cors.cors(quart.Quart(__name__), allow_origin="*")
 @app.route("/")
 async def index():
     return await send_from_directory("", "index.html")
+
+@app.route("/doc/img/icon-transparent.png")
+async def icon_transparent():
+    return await send_from_directory("doc/img", "icon-transparent.png")
 
 
 @app.route("/memegen/generate", methods=['POST'])
@@ -178,6 +192,7 @@ async def post_generate_meme_from_caption():
     captioned_images = []
     for i, caption in enumerate(captions):
         output_image = meme_captioner.add_text_to_image_for_meme_caption(img.copy(), caption)
+        output_image = meme_captioner.add_watermark(output_image)
         output_image.save(f'output/{current_time_millis}-{i}.png')
         captioned_images.append(encode_image(output_image))
 
@@ -210,7 +225,7 @@ def scale_image(image):
     # Resize the image so that the smaller dimension fits 1000 pixels
     new_width = int(scale_factor * width)
     new_height = int(scale_factor * height)
-    image = image.resize((new_width, new_height), Image.ANTIALIAS)
+    image = image.resize((new_width, new_height), Image.LANCZOS)
 
     # Determine dimensions of the square
     max_dim = 1000  # Limit the maximum dimension to 1000 pixels
